@@ -87,6 +87,49 @@ defmodule Nebulex.Cache.SupervisorTest do
     end)
   end
 
+  test "unregisters cache after stopping" do
+    defmodule CustomCache do
+      use Nebulex.Cache,
+        otp_app: :nebulex,
+        adapter: Nebulex.TestCache.AdapterMock
+    end
+
+    assert {:ok, pid} = CustomCache.start_link(child_name: :custom_cache)
+    _ = Process.flag(:trap_exit, true)
+
+    Process.exit(pid, :normal)
+
+    assert Process.exit(pid, :normal)
+
+    assert_receive {:EXIT, ^pid, _reason}
+
+    assert_raise Nebulex.RegistryLookupError, fn ->
+      Nebulex.Cache.Registry.lookup(CustomCache)
+    end
+  end
+
+  test "unregisters cache before stopping" do
+    defmodule CustomCache do
+      use Nebulex.Cache,
+        otp_app: :nebulex,
+        adapter: Nebulex.TestCache.ThrottledAdapterMock
+    end
+
+    assert {:ok, pid} = CustomCache.start_link(child_name: :custom_cache, throttle_exit: {self(), 500})
+    assert CustomCache.get(:foo) == nil
+    _ = Process.flag(:trap_exit, true)
+
+    assert Nebulex.Cache.Registry.lookup(CustomCache)
+
+    Process.exit(pid, :normal)
+
+    assert_receive :shutdown_started
+
+    assert_raise Nebulex.RegistryLookupError, fn ->
+      CustomCache.get(:foo)
+    end
+  end
+
   ## Helpers
 
   def handle_event(event, measurements, metadata, %{pid: pid}) do

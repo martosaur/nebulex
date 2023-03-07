@@ -198,6 +198,48 @@ defmodule Nebulex.TestCache do
     def stream(_, _, _), do: 1..10
   end
 
+  defmodule ThrottledAdapterMock do
+    @moduledoc false
+    @behaviour Nebulex.Adapter
+    @behaviour Nebulex.Adapter.Entry
+    @behaviour Nebulex.Adapter.Queryable
+
+    @impl true
+    defmacro __before_compile__(_), do: :ok
+
+    @impl true
+    def init(opts) do
+      {:ok, child_spec, adapter_meta} = Nebulex.Adapters.Local.init(opts)
+
+      child_spec =
+        Map.update!(child_spec, :start, fn {module, function, [children | rest_args]} ->
+          {module, function, [[{__MODULE__.ExitThrottler, opts[:throttle_exit]} | children] | rest_args]}
+        end)
+
+      {:ok, child_spec, adapter_meta}
+    end
+
+    defdelegate get(adapter_meta, key, opts), to: Nebulex.Adapters.Local
+
+    defmodule ExitThrottler do
+      use GenServer
+
+      def init({test_pid, ms}) do
+        Process.flag(:trap_exit, true)
+        {:ok, {test_pid, ms}}
+      end
+
+      def start_link(arg) do
+        GenServer.start_link(__MODULE__, arg, name: __MODULE__)
+      end
+
+      def terminate(_reason, {test_pid, ms}) do
+        Process.send(test_pid, :shutdown_started, [])
+        Process.sleep(ms)
+      end
+    end
+  end
+
   defmodule PartitionedMock do
     @moduledoc false
     use Nebulex.Cache,
